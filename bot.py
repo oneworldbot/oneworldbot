@@ -804,25 +804,51 @@ def callback_query(update: Update, context: CallbackContext):
         return
     if data.startswith('play:'):
         game = data.split(':',1)[1]
-        # route to handlers
+        query.answer()
+        # inline implementations so callback UI works immediately
         if game == 'slots':
-            # simulate pressing /slots
-            add_balance(user.id, 0)  # touch DB
-            # call slots handler
-            # we can call by creating a fake Update, but simpler: send text and call function
-            query.answer('Starting Slots...')
-            query.message.reply_text('Starting Slots...')
-            slots_cmd(query, context)
+            symbols = ['🍒', '🔔', '🍋', '⭐', '7️⃣']
+            result = [random.choice(symbols) for _ in range(3)]
+            text = "|" + "|".join(result) + "|"
+            reward = 0
+            if result[0] == result[1] == result[2]:
+                reward = 200
+            elif result[0] == result[1] or result[1] == result[2] or result[0] == result[2]:
+                reward = 50
+            if reward > 0:
+                add_balance(user.id, reward)
+                text += f"\nYou won {reward} OWC!"
+            else:
+                text += "\nNo win, try again."
+            try:
+                query.message.reply_text(translate(text, user.language_code or "en"))
+            except Exception:
+                logger.exception('slots reply failed')
             return
         if game == 'roulette':
-            query.answer('Open Roulette...')
-            query.message.reply_text('Open Roulette...')
-            roulette_cmd(query, context)
+            # quick inline roulette spin (no bet amount) - random 0-36
+            spin = random.randint(0,36)
+            # small reward if hit lucky number like 7
+            if spin == 7:
+                payout = 500
+                add_balance(user.id, payout)
+                query.message.reply_text(translate(f"Roulette: {spin}. Lucky! You won {payout} OWC", user.language_code or "en"))
+            else:
+                query.message.reply_text(translate(f"Roulette: {spin}. Try again.", user.language_code or "en"))
             return
         if game == 'ludo':
-            query.answer('Join Ludo...')
-            query.message.reply_text('Join Ludo...')
-            play_ludo_cmd(query, context)
+            cost = int(os.environ.get('LUDO_COST', '10'))
+            bal = get_balance(user.id)
+            if bal < cost:
+                query.message.reply_text(translate(f"Insufficient balance to join Ludo. Cost: {cost} OWC", user.language_code or "en"))
+                return
+            # join (for now immediate play: random reward)
+            reward = random.randint(0,50)
+            add_balance(user.id, -cost)
+            if reward > 0:
+                add_balance(user.id, reward)
+            _record_game(user.id, 'ludo', cost, 'play', reward - cost)
+            query.message.reply_text(translate(f"Ludo: you spent {cost} OWC and won {reward} OWC (net {reward-cost}).", user.language_code or "en"))
             return
     elif data.startswith("quiz:"):
         payload = data.split(":", 2)
