@@ -177,6 +177,47 @@ def init_db(conn):
     )
     """
     )
+    # game history and daily claims
+    cur.execute(
+        """
+    CREATE TABLE IF NOT EXISTS game_history (
+        id INTEGER PRIMARY KEY,
+        user_id INTEGER,
+        game TEXT,
+        stake INTEGER,
+        result TEXT,
+        change INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """
+    )
+    cur.execute(
+        """
+    CREATE TABLE IF NOT EXISTS daily_claims (
+        user_id INTEGER PRIMARY KEY,
+        last_claim TIMESTAMP
+    )
+    """
+    )
+    # jackpot pool
+    cur.execute(
+        """
+    CREATE TABLE IF NOT EXISTS jackpot (
+        id INTEGER PRIMARY KEY,
+        pool INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """
+    )
+    cur.execute(
+        """
+    CREATE TABLE IF NOT EXISTS jackpot_entries (
+        id INTEGER PRIMARY KEY,
+        jackpot_id INTEGER,
+        user_id INTEGER
+    )
+    """
+    )
     # ensure treasury user (user_id = 0) exists with TOTAL_SUPPLY
     cur.execute("SELECT id FROM users WHERE user_id = 0")
     if not cur.fetchone():
@@ -706,6 +747,153 @@ def quiz_cmd(update: Update, context: CallbackContext):
         [InlineKeyboardButton("5", callback_data="quiz:1:c")],
     ]
     update.message.reply_text(translate(question, update.effective_user.language_code or "en"), reply_markup=InlineKeyboardMarkup(buttons))
+
+
+def _record_game(user_id: int, game: str, stake: int, result: str, change: int):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("INSERT INTO game_history (user_id, game, stake, result, change) VALUES (?, ?, ?, ?, ?)", (user_id, game, stake, result, change))
+    conn.commit()
+    conn.close()
+
+
+def coinflip_cmd(update: Update, context: CallbackContext):
+    user = update.effective_user
+    args = context.args
+    if not args:
+        update.message.reply_text("Usage: /coinflip <bet_amount>")
+        return
+    try:
+        bet = int(args[0])
+    except ValueError:
+        update.message.reply_text("Bet must be an integer.")
+        return
+    bal = get_balance(user.id)
+    if bet <= 0 or bal < bet:
+        update.message.reply_text("Insufficient balance.")
+        return
+    # 50/50
+    win = random.choice([True, False])
+    if win:
+        payout = bet
+        add_balance(user.id, payout)
+        _record_game(user.id, 'coinflip', bet, 'win', payout)
+        update.message.reply_text(translate(f"You won {payout} OWC!", user.language_code or "en"))
+    else:
+        add_balance(user.id, -bet)
+        _record_game(user.id, 'coinflip', bet, 'lose', -bet)
+        update.message.reply_text(translate(f"You lost {bet} OWC.", user.language_code or "en"))
+
+
+def daily_cmd(update: Update, context: CallbackContext):
+    user = update.effective_user
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT last_claim FROM daily_claims WHERE user_id = ?", (user.id,))
+    r = cur.fetchone()
+    from datetime import datetime, timedelta
+    now = datetime.utcnow()
+    if r:
+        last = datetime.fromisoformat(r[0]) if r[0] else None
+        if last and now - last < timedelta(days=1):
+            update.message.reply_text("Daily already claimed. Come back later.")
+            conn.close()
+            return
+        cur.execute("UPDATE daily_claims SET last_claim = ? WHERE user_id = ?", (now.isoformat(), user.id))
+    else:
+        cur.execute("INSERT INTO daily_claims (user_id, last_claim) VALUES (?, ?)", (user.id, now.isoformat()))
+    conn.commit()
+    conn.close()
+    reward = 50
+    add_balance(user.id, reward)
+    _record_game(user.id, 'daily', 0, 'claim', reward)
+    update.message.reply_text(translate(f"Daily claimed: +{reward} OWC", user.language_code or "en"))
+
+
+def leaderboard_cmd(update: Update, context: CallbackContext):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT user_id, balance FROM users WHERE user_id != 0 ORDER BY balance DESC LIMIT 10")
+    rows = cur.fetchall()
+    conn.close()
+    text = "Leaderboard:\n" + "\n".join([f"{i+1}. {r[0]} - {r[1]} OWC" for i, r in enumerate(rows)])
+    update.message.reply_text(text)
+
+
+def jackpot_join_cmd(update: Update, context: CallbackContext):
+    user = update.effective_user
+    fee = int(os.environ.get('JACKPOT_FEE', '10'))
+    bal = get_balance(user.id)
+    if bal < fee:
+        update.message.reply_text("Insufficient balance to join jackpot.")
+        return
+    add_balance(user.id, -fee)
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    # ensure a jackpot row exists
+    cur.execute("SELECT id FROM jackpot ORDER BY id DESC LIMIT 1")
+    r = cur.fetchone()
+    if not r:
+        cur.execute("INSERT INTO jackpot (pool) VALUES (0)")
+        jackpot_id = cur.lastrowid
+    else:
+        jackpot_id = r[0]
+    # add to pool and entries
+    cur.execute("UPDATE jackpot SET pool = pool + ? WHERE id = ?", (fee, jackpot_id))
+    cur.execute("INSERT INTO jackpot_entries (jackpot_id, user_id) VALUES (?, ?)", (jackpot_id, user.id))
+    conn.commit()
+    conn.close()
+    _record_game(user.id, 'jackpot_join', fee, 'join', -fee)
+    update.message.reply_text(translate(f"Joined jackpot. Fee {fee} OWC added to pool.", user.language_code or "en"))
+
+
+def jackpot_status_cmd(update: Update, context: CallbackContext):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT id, pool FROM jackpot ORDER BY id DESC LIMIT 1")
+    r = cur.fetchone()
+    if not r:
+        update.message.reply_text("No active jackpot yet.")
+        conn.close()
+        return
+    jackpot_id, pool = r
+    cur.execute("SELECT COUNT(*) FROM jackpot_entries WHERE jackpot_id = ?", (jackpot_id,))
+    count = cur.fetchone()[0]
+    conn.close()
+    update.message.reply_text(translate(f"Jackpot #{jackpot_id}: pool {pool} OWC, entries {count}", update.effective_user.language_code or "en"))
+
+
+def admin_jackpot_draw_cmd(update: Update, context: CallbackContext):
+    user = update.effective_user
+    if not _is_admin(user.id):
+        update.message.reply_text("Not authorized")
+        return
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT id, pool FROM jackpot ORDER BY id DESC LIMIT 1")
+    r = cur.fetchone()
+    if not r:
+        update.message.reply_text("No jackpot to draw.")
+        conn.close()
+        return
+    jackpot_id, pool = r
+    cur.execute("SELECT user_id FROM jackpot_entries WHERE jackpot_id = ?", (jackpot_id,))
+    rows = [rr[0] for rr in cur.fetchall()]
+    if not rows:
+        update.message.reply_text("No entries.")
+        conn.close()
+        return
+    winner = random.choice(rows)
+    # payout entire pool to winner
+    add_balance(winner, pool)
+    # record history
+    _record_game(winner, 'jackpot', 0, f'win_{jackpot_id}', pool)
+    # clear entries and create new jackpot
+    cur.execute("DELETE FROM jackpot_entries WHERE jackpot_id = ?", (jackpot_id,))
+    cur.execute("INSERT INTO jackpot (pool) VALUES (0)")
+    conn.commit()
+    conn.close()
+    update.message.reply_text(f"Jackpot #{jackpot_id} won by {winner}! Prize: {pool} OWC")
 
 
 def store_cmd(update: Update, context: CallbackContext):
