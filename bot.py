@@ -753,7 +753,7 @@ def callback_query(update: Update, context: CallbackContext):
             cur.execute("SELECT DISTINCT category FROM task_definitions")
             cats = [r[0] for r in cur.fetchall()]
             conn.close()
-            buttons = [[InlineKeyboardButton(c, callback_data=f"cat:{c}")] for c in cats]
+    # support editing if called from callback, otherwise send a new message
             query.edit_message_text("Task categories:", reply_markup=InlineKeyboardMarkup(buttons))
             return
         if action == 'games':
@@ -1365,6 +1365,38 @@ def main():
     stop_event = Event()
     watcher_thread = Thread(target=deposit_watcher, args=(stop_event, 15), daemon=True)
     watcher_thread.start()
+
+    # start a tiny static server to serve the webapp and accept credit POSTs (dev helper)
+    try:
+        from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
+        import threading, json
+
+        class DevHandler(SimpleHTTPRequestHandler):
+            def translate_path(self, path):
+                # serve webapp/ directory for paths starting with /webapp
+                root = os.path.join(os.path.dirname(__file__), 'webapp')
+                if path.startswith('/webapp'):
+                    rel = path[len('/webapp'):]
+                    if rel == '' or rel == '/':
+                        rel = '/index.html'
+                    return os.path.join(root, rel.lstrip('/'))
+                # otherwise fall back to project root
+                return SimpleHTTPRequestHandler.translate_path(self, path)
+
+        def run_dev_server():
+            host = os.environ.get('WEBAPP_HOST', '0.0.0.0')
+            port = int(os.environ.get('WEBAPP_PORT', '8081'))
+            srv = ThreadingHTTPServer((host, port), DevHandler)
+            logger.info('Dev webapp server running on %s:%d', host, port)
+            try:
+                srv.serve_forever()
+            finally:
+                srv.server_close()
+
+        t = threading.Thread(target=run_dev_server, daemon=True)
+        t.start()
+    except Exception:
+        logger.exception('Failed to start dev webapp server')
 
     updater.start_polling()
     try:
