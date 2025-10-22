@@ -7,5 +7,6 @@ INFO:web3_utils:web3 connected to https://bsc-dataseed.binance.org/ (attempt 1/3
 INFO:__main__:web3 initialized: True
 Starting OneWorldBot...
 INFO:apscheduler.scheduler:Scheduler started
+INFO:__main__:Dev webapp server running on 0.0.0.0:8081
 INFO:web3_utils:web3 connected to https://bsc-dataseed.binance.org/ (attempt 1/3)
 INFO:__main__:deposit_watcher started
