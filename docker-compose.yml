@@ -1,5 +1,28 @@
 version: '3.8'
 services:
+  bot:
+    build: .
+    command: python3 bot.py
+    environment:
+      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
+      - BSC_RPC=${BSC_RPC}
+      - TREASURY_ADDRESS=${TREASURY_ADDRESS}
+      - WEBAPP_HOST=0.0.0.0
+      - WEBAPP_PORT=8081
+    volumes:
+      - ./:/app
+    ports:
+      - "8081:8081"
+  webapp:
+    image: tiangolo/uvicorn-gunicorn-fastapi:python3.12
+    volumes:
+      - ./webapp:/app
+    environment:
+      - WEBAPP_SHARED_SECRET=${WEBAPP_SHARED_SECRET}
+    ports:
+      - "8082:80"
+version: '3.8'
+services:
   oneworldbot:
     build: .
     restart: unless-stopped
