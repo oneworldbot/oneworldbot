@@ -47,6 +47,10 @@ DB_PATH = os.path.join(os.path.dirname(__file__), "oneworld.db")
 TOTAL_SUPPLY = 1_000_000_000_000
 # Initial airdrop per new user (adjustable)
 INITIAL_AIRDROP = 1000
+# Business defaults
+TOKEN_PRICE_USD = float(os.environ.get('TOKEN_PRICE_USD', '10.0'))  # 10 USD per token by default
+MIN_PURCHASE_USD = float(os.environ.get('MIN_PURCHASE_USD', '11.0'))  # minimum purchase in USD
+REFERRAL_REWARD_TOKENS_PER_10 = int(os.environ.get('REFERRAL_REWARD_TOKENS_PER_10', '1'))
 # Economy config (can be overridden via .env)
 TOKEN_USD_PRICE = float(os.environ.get('TOKEN_USD_PRICE', '1.0'))  # 1 USD per token by default
 PLATFORM_FEE_PERCENT = int(os.environ.get('PLATFORM_FEE_PERCENT', '5'))  # 5% fee on deposits
@@ -182,6 +186,24 @@ def init_db(conn):
     )
     """
     )
+    # referrals tracking
+    cur.execute(
+        """
+    CREATE TABLE IF NOT EXISTS referrals (
+        id INTEGER PRIMARY KEY,
+        referrer_user_id INTEGER,
+        referred_user_id INTEGER UNIQUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """
+    )
+    # insert default social links (can be updated later via DB)
+    cur.execute("INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)", ('social_facebook', 'https://facebook.com/OneWorld'))
+    cur.execute("INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)", ('social_twitter', 'https://twitter.com/OneWorld'))
+    cur.execute("INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)", ('social_telegram', 'https://t.me/OneWorldOFFicialBOT'))
+    cur.execute("INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)", ('social_discord', 'https://discord.gg/oneworld'))
+    cur.execute("INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)", ('social_youtube', 'https://youtube.com/OneWorld'))
+    cur.execute("INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)", ('social_tiktok', 'https://tiktok.com/@OneWorld'))
     # game history and daily claims
     cur.execute(
         """
@@ -480,6 +502,25 @@ def _handle_referral_claim(new_user_id: int, ref_code: str):
         cur.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (50, new_user_id))
         conn.commit()
         return True
+    finally:
+        conn.close()
+
+
+def _record_referral(referrer_user_id: int, referred_user_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    try:
+        cur.execute("INSERT OR IGNORE INTO referrals (referrer_user_id, referred_user_id) VALUES (?, ?)", (referrer_user_id, referred_user_id))
+        conn.commit()
+        # count referrals
+        cur.execute("SELECT COUNT(*) FROM referrals WHERE referrer_user_id = ?", (referrer_user_id,))
+        cnt = cur.fetchone()[0]
+        # award tokens every 10 successful referrals
+        if cnt > 0 and cnt % 10 == 0:
+            add_balance(referrer_user_id, REFERRAL_REWARD_TOKENS_PER_10)
+            # log transaction
+            cur.execute("INSERT INTO transactions (user_id, amount, reason) VALUES (?, ?, ?)", (referrer_user_id, REFERRAL_REWARD_TOKENS_PER_10, 'referral_bonus'))
+            conn.commit()
     finally:
         conn.close()
 
@@ -1061,6 +1102,63 @@ def admin_list_tasks_cmd(update: Update, context: CallbackContext):
     update.message.reply_text(text)
 
 
+def about_org_cmd(update: Update, context: CallbackContext):
+    text = (
+        "OneWorld is a global community and ecosystem combining blockchain-based tokens, cloud storage, NFT marketplaces, logistics and more. "
+        "Our mission is to distribute value and enable participation worldwide.\n\n"
+        "Projects: Web services, cloud storage, NFYLT marketplace, logistics, global branches and digital infrastructure investments."
+    )
+    update.message.reply_text(text)
+
+
+def social_tasks_cmd(update: Update, context: CallbackContext):
+    # Social tasks examples with links pulled from config
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT value FROM config WHERE key LIKE 'social_%'")
+    rows = cur.fetchall()
+    conn.close()
+    links = "\n".join([r[0] for r in rows])
+    text = (
+        "Social tasks:\n- Like our posts on Facebook, Twitter, Telegram, Discord, YouTube, TikTok.\n"
+        "Complete 100 social actions (likes/comments/views/app installs) to qualify for token rewards.\n\nLinks:\n" + links
+    )
+    update.message.reply_text(text)
+
+
+def games_list_cmd(update: Update, context: CallbackContext):
+    # list games and required tokens to unlock
+    games = [
+        (1, 'Mini Spin', 1),
+        (2, 'Coin Flip', 1),
+        (3, 'Dice Duel', 2),
+        (4, 'Slots', 2),
+        (5, 'Quiz Royale', 3),
+        (6, 'Roulette', 3),
+        (7, 'Team Battles', 5),
+        (8, 'Ludo (group)', 10),
+        (9, 'Strategy War', 15),
+        (10, 'Grand Jackpot', 20),
+    ]
+    text = "Games available:\n" + "\n".join([f"{g[0]}. {g[1]} - unlock at {g[2]} OWC" for g in games])
+    update.message.reply_text(text)
+
+
+def buy_info_cmd(update: Update, context: CallbackContext):
+    text = f"Minimum purchase: ${MIN_PURCHASE_USD}. Token price: ${TOKEN_PRICE_USD} per token. You can buy via BNB deposit (use /buy_tokens and /deposit). Platform fee: {PLATFORM_FEE_PERCENT}% of tokens."
+    update.message.reply_text(text)
+
+
+def invite_stats_cmd(update: Update, context: CallbackContext):
+    user = update.effective_user
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM referrals WHERE referrer_user_id = ?", (user.id,))
+    cnt = cur.fetchone()[0]
+    conn.close()
+    update.message.reply_text(f"You have {cnt} successful referrals. Every 10 referrals = {REFERRAL_REWARD_TOKENS_PER_10} OWC bonus.")
+
+
 def profile_cmd(update: Update, context: CallbackContext):
     user = update.effective_user
     bal = get_balance(user.id)
@@ -1164,6 +1262,11 @@ def main():
     dp.add_handler(CommandHandler("rate", rate_cmd))
     dp.add_handler(CommandHandler("buy_tokens", buy_tokens_cmd))
     dp.add_handler(CommandHandler("play_ludo", play_ludo_cmd))
+    dp.add_handler(CommandHandler("about_org", about_org_cmd))
+    dp.add_handler(CommandHandler("social_tasks", social_tasks_cmd))
+    dp.add_handler(CommandHandler("games", games_list_cmd))
+    dp.add_handler(CommandHandler("buy_info", buy_info_cmd))
+    dp.add_handler(CommandHandler("invite_stats", invite_stats_cmd))
     dp.add_handler(CommandHandler("dice", dice_cmd))
     dp.add_handler(CommandHandler("quiz", quiz_cmd))
     dp.add_handler(CommandHandler("store", store_cmd))
