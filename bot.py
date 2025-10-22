@@ -142,6 +142,41 @@ def init_db(conn):
     )
     """
     )
+    # tasks definitions (catalog of available tasks grouped by category)
+    cur.execute(
+        """
+    CREATE TABLE IF NOT EXISTS task_definitions (
+        id INTEGER PRIMARY KEY,
+        key TEXT UNIQUE,
+        category TEXT,
+        title_en TEXT,
+        description_en TEXT,
+        reward INTEGER DEFAULT 0
+    )
+    """
+    )
+    # user ratings and reputation
+    cur.execute(
+        """
+    CREATE TABLE IF NOT EXISTS user_ratings (
+        id INTEGER PRIMARY KEY,
+        user_id INTEGER,
+        rater_id INTEGER,
+        rating INTEGER,
+        comment TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """
+    )
+    # simple key/value config stored in DB (for contract addresses, treasury, etc)
+    cur.execute(
+        """
+    CREATE TABLE IF NOT EXISTS config (
+        key TEXT PRIMARY KEY,
+        value TEXT
+    )
+    """
+    )
     # ensure treasury user (user_id = 0) exists with TOTAL_SUPPLY
     cur.execute("SELECT id FROM users WHERE user_id = 0")
     if not cur.fetchone():
@@ -578,6 +613,32 @@ def callback_query(update: Update, context: CallbackContext):
     query = update.callback_query
     data = query.data or ""
     user = query.from_user
+    # category/menu callbacks
+    if data.startswith("menu:"):
+        action = data.split(":", 1)[1]
+        if action == 'tasks':
+            # show categories
+            conn = sqlite3.connect(DB_PATH)
+            cur = conn.cursor()
+            cur.execute("SELECT DISTINCT category FROM task_definitions")
+            cats = [r[0] for r in cur.fetchall()]
+            conn.close()
+            buttons = [[InlineKeyboardButton(c, callback_data=f"cat:{c}")] for c in cats]
+            query.edit_message_text("Task categories:", reply_markup=InlineKeyboardMarkup(buttons))
+            return
+    if data.startswith("cat:"):
+        cat = data.split(":", 1)[1]
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute("SELECT key, title_en, reward FROM task_definitions WHERE category = ?", (cat,))
+        rows = cur.fetchall()
+        conn.close()
+        if not rows:
+            query.answer("No tasks in this category")
+            return
+        buttons = [[InlineKeyboardButton(f"{r[1]} (+{r[2]} OWC)", callback_data=f"task:{r[0]}")] for r in rows]
+        query.edit_message_text(f"Tasks in {cat}:", reply_markup=InlineKeyboardMarkup(buttons))
+        return
     # presale callbacks
     if data.startswith("presale:"):
         amt = int(data.split(":", 1)[1])
@@ -593,12 +654,17 @@ def callback_query(update: Update, context: CallbackContext):
         if not claimed:
             query.answer(translate("You already claimed this task.", user.language_code or "en"))
             return
-        # award amounts per task
-        reward_map = {"join_channel": 20, "like_post": 10, "comment_post": 15}
-        amount = reward_map.get(task, 5)
+        # fetch reward from definitions
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute("SELECT reward, title_en FROM task_definitions WHERE key = ?", (task,))
+        r = cur.fetchone()
+        conn.close()
+        amount = r[0] if r else 5
+        title = r[1] if r else task
         add_balance(user.id, amount)
         query.answer(translate(f"Task claimed! +{amount} OWC", user.language_code or "en"))
-        query.edit_message_text(translate(f"Task '{task}' claimed. You got +{amount} OWC.", user.language_code or "en"))
+        query.edit_message_text(translate(f"Task '{title}' claimed. You got +{amount} OWC.", user.language_code or "en"))
     elif data.startswith("quiz:"):
         payload = data.split(":", 2)
         # payload: quiz:question_id:option
@@ -676,6 +742,89 @@ def buy_storage_cmd(update: Update, context: CallbackContext):
     update.message.reply_text(translate(f"Purchased {amt} storage for {cost} OWC.", user.language_code or "en"))
 
 
+def task_categories_cmd(update: Update, context: CallbackContext):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT DISTINCT category FROM task_definitions")
+    cats = [r[0] for r in cur.fetchall()]
+    conn.close()
+    if not cats:
+        update.message.reply_text("No task categories configured yet.")
+        return
+    buttons = [[InlineKeyboardButton(c, callback_data=f"cat:{c}")] for c in cats]
+    update.message.reply_text("Task categories:", reply_markup=InlineKeyboardMarkup(buttons))
+
+
+def admin_add_task_cmd(update: Update, context: CallbackContext):
+    user = update.effective_user
+    if not _is_admin(user.id):
+        update.message.reply_text("Not authorized")
+        return
+    # usage: /admin_add_task key|category|title|desc|reward
+    args = " ".join(context.args)
+    parts = args.split("|")
+    if len(parts) < 5:
+        update.message.reply_text("Usage: /admin_add_task key|category|title|desc|reward")
+        return
+    key, category, title, desc, reward = parts[0].strip(), parts[1].strip(), parts[2].strip(), parts[3].strip(), int(parts[4].strip())
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    try:
+        cur.execute("INSERT INTO task_definitions (key, category, title_en, description_en, reward) VALUES (?, ?, ?, ?, ?)", (key, category, title, desc, reward))
+        conn.commit()
+        update.message.reply_text(f"Task {key} added.")
+    except Exception as e:
+        update.message.reply_text(f"Error: {e}")
+    finally:
+        conn.close()
+
+
+def admin_list_tasks_cmd(update: Update, context: CallbackContext):
+    user = update.effective_user
+    if not _is_admin(user.id):
+        update.message.reply_text("Not authorized")
+        return
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT key, category, title_en, reward FROM task_definitions ORDER BY category")
+    rows = cur.fetchall()
+    conn.close()
+    if not rows:
+        update.message.reply_text("No tasks defined.")
+        return
+    text = "Tasks:\n" + "\n".join([f"{r[0]} ({r[1]}) - {r[2]} +{r[3]} OWC" for r in rows])
+    update.message.reply_text(text)
+
+
+def profile_cmd(update: Update, context: CallbackContext):
+    user = update.effective_user
+    bal = get_balance(user.id)
+    storage = get_storage_capacity(user.id)
+    text = f"Profile for {user.full_name}:\nBalance: {bal} OWC\nStorage: {storage}\n"
+    update.message.reply_text(text)
+
+
+def rate_cmd(update: Update, context: CallbackContext):
+    user = update.effective_user
+    args = context.args
+    if len(args) < 2:
+        update.message.reply_text("Usage: /rate <user_id> <1-5> [comment]")
+        return
+    try:
+        target = int(args[0])
+        rating = int(args[1])
+    except ValueError:
+        update.message.reply_text("Invalid parameters.")
+        return
+    comment = " ".join(args[2:]) if len(args) > 2 else ""
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("INSERT INTO user_ratings (user_id, rater_id, rating, comment) VALUES (?, ?, ?, ?)", (target, user.id, rating, comment))
+    conn.commit()
+    conn.close()
+    update.message.reply_text("Rating recorded. Thanks!")
+
+
 def subscribe_cmd(update: Update, context: CallbackContext):
     user = update.effective_user
     args = context.args
@@ -740,6 +889,14 @@ def main():
     dp.add_handler(CommandHandler("balance", balance_cmd))
     dp.add_handler(CommandHandler("tasks", tasks_cmd))
     dp.add_handler(CommandHandler("referral", referral_cmd))
+    dp.add_handler(CommandHandler("menu", menu_cmd))
+    dp.add_handler(CommandHandler("slots", slots_cmd))
+    dp.add_handler(CommandHandler("roulette", roulette_cmd))
+    dp.add_handler(CommandHandler("task_categories", task_categories_cmd))
+    dp.add_handler(CommandHandler("admin_add_task", admin_add_task_cmd))
+    dp.add_handler(CommandHandler("admin_list_tasks", admin_list_tasks_cmd))
+    dp.add_handler(CommandHandler("profile", profile_cmd))
+    dp.add_handler(CommandHandler("rate", rate_cmd))
     dp.add_handler(CommandHandler("dice", dice_cmd))
     dp.add_handler(CommandHandler("quiz", quiz_cmd))
     dp.add_handler(CommandHandler("store", store_cmd))
