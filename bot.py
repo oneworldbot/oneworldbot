@@ -390,7 +390,70 @@ def tasks_cmd(update: Update, context: CallbackContext):
         [InlineKeyboardButton(label, callback_data=f"task:{key}")]
         for key, label in tasks
     ]
+    # add a menu button
+    buttons.append([InlineKeyboardButton("Main Menu", callback_data="menu:main")])
     update.message.reply_text(translate("Available tasks:", user.language_code or "en"), reply_markup=InlineKeyboardMarkup(buttons))
+
+
+def menu_cmd(update: Update, context: CallbackContext):
+    user = update.effective_user
+    buttons = [
+        [InlineKeyboardButton("Balance", callback_data="menu:balance")],
+        [InlineKeyboardButton("Tasks", callback_data="menu:tasks")],
+        [InlineKeyboardButton("Games", callback_data="menu:games")],
+        [InlineKeyboardButton("Store", callback_data="menu:store")],
+    ]
+    update.message.reply_text(translate("Main Menu:", user.language_code or "en"), reply_markup=InlineKeyboardMarkup(buttons))
+
+
+def slots_cmd(update: Update, context: CallbackContext):
+    user = update.effective_user
+    # simple slot machine: three wheels with symbols
+    symbols = ['🍒', '🔔', '🍋', '⭐', '7️⃣']
+    result = [random.choice(symbols) for _ in range(3)]
+    text = "|" + "|".join(result) + "|"
+    # determine reward
+    reward = 0
+    if result[0] == result[1] == result[2]:
+        reward = 200
+    elif result[0] == result[1] or result[1] == result[2] or result[0] == result[2]:
+        reward = 50
+    else:
+        reward = 0
+    if reward > 0:
+        add_balance(user.id, reward)
+        text += f"\nYou won {reward} OWC!"
+    else:
+        text += "\nNo win, try again."
+    update.message.reply_text(translate(text, user.language_code or "en"))
+
+
+def roulette_cmd(update: Update, context: CallbackContext):
+    user = update.effective_user
+    # user can place bet like: /roulette 7 10  (number 0-36 and bet amount)
+    args = context.args
+    if len(args) < 2:
+        update.message.reply_text(translate("Usage: /roulette <number 0-36> <bet_amount>", user.language_code or "en"))
+        return
+    try:
+        number = int(args[0])
+        bet = int(args[1])
+    except ValueError:
+        update.message.reply_text(translate("Invalid number or bet.", user.language_code or "en"))
+        return
+    bal = get_balance(user.id)
+    if bet <= 0 or bal < bet:
+        update.message.reply_text(translate("Insufficient balance for that bet.", user.language_code or "en"))
+        return
+    # spin
+    spin = random.randint(0, 36)
+    if spin == number:
+        payout = bet * 35
+        add_balance(user.id, payout)
+        update.message.reply_text(translate(f"Roulette: {spin}. You hit! Payout: {payout} OWC", user.language_code or "en"))
+    else:
+        add_balance(user.id, -bet)
+        update.message.reply_text(translate(f"Roulette: {spin}. You lost {bet} OWC.", user.language_code or "en"))
 
 
 def referral_cmd(update: Update, context: CallbackContext):
