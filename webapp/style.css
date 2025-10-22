@@ -1,0 +1,6 @@
+body{font-family:Inter,Arial,Helvetica,sans-serif;background:#071028;color:#e6eef8;margin:0}
+#app{max-width:960px;margin:0 auto;padding:20px}
+header{display:flex;align-items:center;gap:12px}
+.card{background:linear-gradient(180deg,#0b1b2a 0%,#06121a 100%);padding:18px;border-radius:12px;margin:12px 0}
+button{background:#06b6d4;border:none;color:#062023;padding:10px 14px;border-radius:8px;font-weight:700}
+#slots-result,#roulette-result{font-size:18px;padding:14px;background:#041022;border-radius:8px;color:#9fe7ff;margin-bottom:8px}
