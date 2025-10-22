@@ -8,10 +8,9 @@ document.getElementById('play-slots').addEventListener('click', ()=>{
   try{
     const userId = new URLSearchParams(window.location.search).get('user_id');
     if(userId){
-      fetch(`/webapp/credit`,{
-        method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({user_id: parseInt(userId), amount: 10, secret: 'WEBAPP_SHARED_SECRET'})
-      }).then(r=>r.json()).then(j=>console.log('credit response', j)).catch(e=>console.warn('credit failed',e));
+      const origin = window.location.origin || (window.location.protocol + '//' + window.location.host)
+      const url = origin + '/webapp/credit'
+      fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id: parseInt(userId), amount: 10, secret: 'WEBAPP_SHARED_SECRET'})}).then(r=>r.json()).then(j=>console.log('credit response', j)).catch(e=>console.warn('credit failed',e));
     }
   }catch(e){console.warn(e)}
 });
