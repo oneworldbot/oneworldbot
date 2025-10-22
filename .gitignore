@@ -1,3 +1,17 @@
+token.txt
+*.env
+oneworld.db
+__pycache__/
+.venv/
+env/
+venv/
+*.pyc
+*.pyo
+.DS_Store
+__pycache__/
+oneworld.db
+token.txt
+.env
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

@@ -1,0 +1,14 @@
+version: '3.8'
+services:
+  oneworldbot:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./oneworld.db:/app/oneworld.db
+    networks:
+      - oneworld-net
+
+networks:
+  oneworld-net:
+    driver: bridge
