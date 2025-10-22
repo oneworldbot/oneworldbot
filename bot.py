@@ -24,7 +24,7 @@ from functools import wraps
 from decimal import Decimal
 
 from dotenv import load_dotenv
-from deep_translator import GoogleTranslator
+from i18n import translate as i18n_translate
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Updater,
@@ -225,12 +225,7 @@ def init_db(conn):
 
 
 def translate(text: str, target_lang: str) -> str:
-    if not target_lang or target_lang.startswith("en"):
-        return text
-    try:
-        return GoogleTranslator(source='auto', target=target_lang[:2]).translate(text)
-    except Exception:
-        return text
+    return i18n_translate(text, target_lang)
 
 
 @with_db
