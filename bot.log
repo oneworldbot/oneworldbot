@@ -1,0 +1,14 @@
+/home/codespace/.python/current/lib/python3.12/site-packages/telegram/utils/request.py:49: UserWarning: python-telegram-bot is using upstream urllib3. This is allowed but not supported by python-telegram-bot maintainers.
+  warnings.warn(
+/home/codespace/.python/current/lib/python3.12/site-packages/apscheduler/__init__.py:1: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import get_distribution, DistributionNotFound
+INFO:web3_utils:web3 connected to https://bsc-dataseed.binance.org/ (attempt 1/3)
+INFO:__main__:web3 initialized: True
+INFO:apscheduler.scheduler:Scheduler started
+INFO:web3_utils:web3 connected to https://bsc-dataseed.binance.org/ (attempt 1/3)
+INFO:__main__:deposit_watcher started
+ERROR:__main__:Failed to send main menu
+Traceback (most recent call last):
+  File "/workspaces/oneworldbot/bot.py", line 466, in start
+    send_main_menu(update, context, landing=True)
+TypeError: send_main_menu() got an unexpected keyword argument 'landing'

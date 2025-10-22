@@ -468,15 +468,15 @@ def start(update: Update, context: CallbackContext):
         logger.exception("Failed to send main menu")
 
 
-def send_main_menu(update: Update, context: CallbackContext):
+def send_main_menu(update: Update, context: CallbackContext, landing: bool = False):
     # reusable main menu: big buttons with emojis. If landing=True show prominent layout
     user = update.effective_user
-    landing = False
-    try:
-        # landing flag may be passed in as keyword arg (from start)
-        landing = bool(context.args and context.args[0] == 'landing')
-    except Exception:
-        landing = False
+    # support legacy where landing may be passed in via context.args
+    if not isinstance(landing, bool):
+        try:
+            landing = bool(context.args and context.args[0] == 'landing')
+        except Exception:
+            landing = False
     # build a larger keyboard for landing
     buttons = [
         [InlineKeyboardButton("🎮 Play Games", callback_data="menu:games"), InlineKeyboardButton("✅ Tasks", callback_data="menu:tasks")],
