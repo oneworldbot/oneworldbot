@@ -440,7 +440,7 @@ def start(update: Update, context: CallbackContext):
     ensure_user(user)
     args = context.args
     welcome = (
-        "Welcome to OneWorld - the official OWC community bot! Earn OWC by completing tasks, playing games and referring friends."
+        "Welcome to OneWorld — the global OWC ecosystem!\nEarn OWC by completing tasks, playing games, referring friends and participating in our projects."
     )
     # handle referral parameter: /start <code>
     if args:
@@ -449,36 +449,48 @@ def start(update: Update, context: CallbackContext):
         welcome = "Welcome! Referral applied when possible. " + welcome
 
     text = translate(welcome, user.language_code or "en")
-    # send logo if available
+    # send a hero image / logo if available, then a large landing menu
     logo_path = os.path.join(os.path.dirname(__file__), 'assets', 'logo.svg')
     try:
         if os.path.exists(logo_path):
-            # send as document (SVG) so clients receive the logo
+            # send as document (SVG) which displays the brand image first
             update.message.reply_document(open(logo_path, 'rb'))
     except Exception:
         logger.exception("Failed to send logo")
-    update.message.reply_text(text)
-    # show main menu buttons
+
+    # landing text (large, translated)
+    update.message.reply_text(translate(welcome, user.language_code or "en"))
+
+    # show a full landing menu with big icon buttons
     try:
-        send_main_menu(update, context)
+        send_main_menu(update, context, landing=True)
     except Exception:
         logger.exception("Failed to send main menu")
 
 
 def send_main_menu(update: Update, context: CallbackContext):
-    # reusable main menu: Balance, Tasks, Games, Store
+    # reusable main menu: big buttons with emojis. If landing=True show prominent layout
     user = update.effective_user
+    landing = False
+    try:
+        # landing flag may be passed in as keyword arg (from start)
+        landing = bool(context.args and context.args[0] == 'landing')
+    except Exception:
+        landing = False
+    # build a larger keyboard for landing
     buttons = [
-        [InlineKeyboardButton("Balance", callback_data="menu:balance")],
-        [InlineKeyboardButton("Tasks", callback_data="menu:tasks")],
-        [InlineKeyboardButton("Games", callback_data="menu:games")],
-        [InlineKeyboardButton("Store", callback_data="menu:store")],
+        [InlineKeyboardButton("🎮 Play Games", callback_data="menu:games"), InlineKeyboardButton("✅ Tasks", callback_data="menu:tasks")],
+        [InlineKeyboardButton("🛒 Store", callback_data="menu:store"), InlineKeyboardButton("💱 Buy", callback_data="buy_info")],
+        [InlineKeyboardButton("🔗 Invite", callback_data="menu:invite"), InlineKeyboardButton("🌐 About", callback_data="menu:about")],
     ]
-    # if called from a command, send new message; if callback, edit
-    if update.callback_query:
-        update.callback_query.edit_message_text(translate("Main Menu:", user.language_code or "en"), reply_markup=InlineKeyboardMarkup(buttons))
-    else:
-        update.message.reply_text(translate("Main Menu:", user.language_code or "en"), reply_markup=InlineKeyboardMarkup(buttons))
+    # support editing if called from callback, otherwise send a new message
+    if hasattr(update, 'callback_query') and update.callback_query:
+        try:
+            update.callback_query.edit_message_text(translate("Welcome — choose a section:", user.language_code or "en"), reply_markup=InlineKeyboardMarkup(buttons))
+            return
+        except Exception:
+            logger.exception('edit main menu failed')
+    update.message.reply_text(translate("Welcome — choose a section:", user.language_code or "en"), reply_markup=InlineKeyboardMarkup(buttons))
 
 
 def _handle_referral_claim(new_user_id: int, ref_code: str):
