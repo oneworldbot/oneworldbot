@@ -744,6 +744,24 @@ def callback_query(update: Update, context: CallbackContext):
             buttons = [[InlineKeyboardButton(c, callback_data=f"cat:{c}")] for c in cats]
             query.edit_message_text("Task categories:", reply_markup=InlineKeyboardMarkup(buttons))
             return
+        if action == 'games':
+            # show rich game cards
+            games = [
+                ('slots', 'Slots', 'assets/slots.svg'),
+                ('roulette', 'Roulette', 'assets/roulette.svg'),
+                ('ludo', 'Ludo (group)', 'assets/ludo.svg'),
+            ]
+            for key, title, icon in games:
+                try:
+                    # send icon then play button
+                    path = os.path.join(os.path.dirname(__file__), icon)
+                    if os.path.exists(path):
+                        query.message.reply_document(open(path, 'rb'))
+                except Exception:
+                    logger.exception('send game icon failed')
+                buttons = [[InlineKeyboardButton('Play', callback_data=f'play:{key}')]]
+                query.message.reply_text(title, reply_markup=InlineKeyboardMarkup(buttons))
+            return
     if data.startswith("cat:"):
         cat = data.split(":", 1)[1]
         conn = sqlite3.connect(DB_PATH)
@@ -783,6 +801,29 @@ def callback_query(update: Update, context: CallbackContext):
         add_balance(user.id, amount)
         query.answer(translate(f"Task claimed! +{amount} OWC", user.language_code or "en"))
         query.edit_message_text(translate(f"Task '{title}' claimed. You got +{amount} OWC.", user.language_code or "en"))
+        return
+    if data.startswith('play:'):
+        game = data.split(':',1)[1]
+        # route to handlers
+        if game == 'slots':
+            # simulate pressing /slots
+            add_balance(user.id, 0)  # touch DB
+            # call slots handler
+            # we can call by creating a fake Update, but simpler: send text and call function
+            query.answer('Starting Slots...')
+            query.message.reply_text('Starting Slots...')
+            slots_cmd(query, context)
+            return
+        if game == 'roulette':
+            query.answer('Open Roulette...')
+            query.message.reply_text('Open Roulette...')
+            roulette_cmd(query, context)
+            return
+        if game == 'ludo':
+            query.answer('Join Ludo...')
+            query.message.reply_text('Join Ludo...')
+            play_ludo_cmd(query, context)
+            return
     elif data.startswith("quiz:"):
         payload = data.split(":", 2)
         # payload: quiz:question_id:option
@@ -1127,21 +1168,20 @@ def social_tasks_cmd(update: Update, context: CallbackContext):
 
 
 def games_list_cmd(update: Update, context: CallbackContext):
-    # list games and required tokens to unlock
     games = [
-        (1, 'Mini Spin', 1),
-        (2, 'Coin Flip', 1),
-        (3, 'Dice Duel', 2),
-        (4, 'Slots', 2),
-        (5, 'Quiz Royale', 3),
-        (6, 'Roulette', 3),
-        (7, 'Team Battles', 5),
-        (8, 'Ludo (group)', 10),
-        (9, 'Strategy War', 15),
-        (10, 'Grand Jackpot', 20),
+        ('slots', 'Slots', 'assets/slots.svg', 2),
+        ('roulette', 'Roulette', 'assets/roulette.svg', 3),
+        ('ludo', 'Ludo (group)', 'assets/ludo.svg', 10),
     ]
-    text = "Games available:\n" + "\n".join([f"{g[0]}. {g[1]} - unlock at {g[2]} OWC" for g in games])
-    update.message.reply_text(text)
+    for key, title, icon, unlock in games:
+        try:
+            path = os.path.join(os.path.dirname(__file__), icon)
+            if os.path.exists(path):
+                update.message.reply_document(open(path, 'rb'))
+        except Exception:
+            logger.exception('failed to send game icon')
+        buttons = [[InlineKeyboardButton(f'Play ({unlock} OWC)', callback_data=f'play:{key}')]]
+        update.message.reply_text(f"{title} - unlock at {unlock} OWC", reply_markup=InlineKeyboardMarkup(buttons))
 
 
 def buy_info_cmd(update: Update, context: CallbackContext):
