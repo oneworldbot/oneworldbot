@@ -35,6 +35,8 @@ from telegram.ext import (
 from threading import Thread, Event
 import time
 import web3_utils
+import requests
+import math
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -45,6 +47,9 @@ DB_PATH = os.path.join(os.path.dirname(__file__), "oneworld.db")
 TOTAL_SUPPLY = 1_000_000_000_000
 # Initial airdrop per new user (adjustable)
 INITIAL_AIRDROP = 1000
+# Economy config (can be overridden via .env)
+TOKEN_USD_PRICE = float(os.environ.get('TOKEN_USD_PRICE', '1.0'))  # 1 USD per token by default
+PLATFORM_FEE_PERCENT = int(os.environ.get('PLATFORM_FEE_PERCENT', '5'))  # 5% fee on deposits
 
 
 
@@ -346,6 +351,7 @@ def deposit_watcher(stop_event: Event, poll_interval: int = 10):
     w3 = web3_utils.get_w3()
     treasury = (os.environ.get("TREASURY_ADDRESS") or "").lower()
     owc_per_bnb = int(os.environ.get("OWC_PER_BNB", "10000"))
+    fee_percent = int(os.environ.get('PLATFORM_FEE_PERCENT', PLATFORM_FEE_PERCENT))
     logger.info("deposit_watcher started")
     while not stop_event.is_set():
         try:
@@ -377,15 +383,21 @@ def deposit_watcher(stop_event: Event, poll_interval: int = 10):
                 # compute BNB amount
                 value_wei = int(tx.value)
                 bnb_amount = value_wei / 1e18
-                credited = int(bnb_amount * owc_per_bnb)
+                total_tokens = int(bnb_amount * owc_per_bnb)
+                # apply platform fee
+                fee_tokens = int(math.floor(total_tokens * fee_percent / 100.0))
+                credited = total_tokens - fee_tokens
                 if credited <= 0:
                     logger.info(f"TX {tx_hash} has zero value; skipping")
                     # remove pending maybe? skip for now
                     continue
                 # credit user
                 add_balance(user_id, credited)
+                # credit fee to treasury user (user_id = 0)
+                if fee_tokens > 0:
+                    add_balance(0, fee_tokens)
                 mark_deposit_processed(tx_hash, credited, user_id)
-                logger.info(f"Credited user {user_id} with {credited} OWC for tx {tx_hash}")
+                logger.info(f"Credited user {user_id} with {credited} OWC (fee {fee_tokens}) for tx {tx_hash}")
         except Exception:
             logger.exception("Error in deposit_watcher loop")
         time.sleep(poll_interval)
@@ -887,6 +899,47 @@ def jackpot_status_cmd(update: Update, context: CallbackContext):
     update.message.reply_text(translate(f"Jackpot #{jackpot_id}: pool {pool} OWC, entries {count}", update.effective_user.language_code or "en"))
 
 
+def buy_tokens_cmd(update: Update, context: CallbackContext):
+    """Usage: /buy_tokens <amount_in_usd>  OR /buy_tokens bnb <amount_in_bnb>"""
+    user = update.effective_user
+    args = context.args
+    if not args:
+        update.message.reply_text("Usage: /buy_tokens <amount_in_usd>  OR /buy_tokens bnb <amount_in_bnb>")
+        return
+    try:
+        if args[0].lower() == 'bnb' and len(args) >= 2:
+            bnb_amount = float(args[1])
+            owc_per_bnb = int(os.environ.get('OWC_PER_BNB', '10000'))
+            tokens = int(bnb_amount * owc_per_bnb)
+            text = f"Sending {bnb_amount} BNB will buy approximately {tokens} OWC (before fees).\nUse /deposit to get treasury address and then /deposit_confirm <tx_hash>."
+            update.message.reply_text(text)
+            return
+        # amount in USD
+        usd = float(args[0])
+        # price per token in USD
+        price = float(os.environ.get('TOKEN_USD_PRICE', TOKEN_USD_PRICE))
+        tokens = int(math.floor(usd / price))
+        update.message.reply_text(f"{usd} USD will buy approximately {tokens} OWC (check deposit flow to send BNB).")
+    except Exception:
+        update.message.reply_text("Invalid parameters.")
+
+
+def play_ludo_cmd(update: Update, context: CallbackContext):
+    user = update.effective_user
+    cost = int(os.environ.get('LUDO_COST', '10'))
+    bal = get_balance(user.id)
+    if bal < cost:
+        update.message.reply_text("Insufficient balance to play Ludo. Cost: 10 OWC")
+        return
+    # simple randomized reward: win 0-50 tokens
+    reward = random.randint(0, 50)
+    add_balance(user.id, -cost)
+    if reward > 0:
+        add_balance(user.id, reward)
+    _record_game(user.id, 'ludo', cost, 'play', reward - cost)
+    update.message.reply_text(f"Ludo result: you spent {cost} OWC and won {reward} OWC (net {reward-cost}). Good luck!")
+
+
 def admin_jackpot_draw_cmd(update: Update, context: CallbackContext):
     user = update.effective_user
     if not _is_admin(user.id):
@@ -1109,6 +1162,8 @@ def main():
     dp.add_handler(CommandHandler("admin_list_tasks", admin_list_tasks_cmd))
     dp.add_handler(CommandHandler("profile", profile_cmd))
     dp.add_handler(CommandHandler("rate", rate_cmd))
+    dp.add_handler(CommandHandler("buy_tokens", buy_tokens_cmd))
+    dp.add_handler(CommandHandler("play_ludo", play_ludo_cmd))
     dp.add_handler(CommandHandler("dice", dice_cmd))
     dp.add_handler(CommandHandler("quiz", quiz_cmd))
     dp.add_handler(CommandHandler("store", store_cmd))
