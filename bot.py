@@ -664,6 +664,12 @@ def main():
         return
 
     init_db()
+    # initialize web3 early so we know whether deposit watcher can run
+    try:
+        web3_ok = web3_utils.init_web3()
+        logger.info(f"web3 initialized: {web3_ok}")
+    except Exception:
+        logger.exception("Failed to initialize web3 at startup")
     updater = Updater(token, use_context=True)
     dp = updater.dispatcher
 
